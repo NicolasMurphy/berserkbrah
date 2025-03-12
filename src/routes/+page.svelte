@@ -7,13 +7,14 @@
 	let camera: THREE.PerspectiveCamera;
 	let renderer: THREE.WebGLRenderer;
 	let tesseract: THREE.Group;
+	let edgesMesh: THREE.LineSegments;
 
 	onMount(() => {
 		// Text animations
 		gsap.from('.title', { opacity: 0, y: -50, duration: 1.2, ease: 'bounce.out' });
 		gsap.from('.subtitle', { opacity: 0, y: 50, duration: 1.2, delay: 0.3, ease: 'bounce.out' });
 
-		// Title dark glow effect
+		// Title glow effect
 		gsap.to('.title', {
 			textShadow: '0 0 10px #000000, 0 0 20px #ff5577',
 			duration: 2.5,
@@ -38,43 +39,91 @@
 		renderer.setSize(window.innerWidth, window.innerHeight);
 		document.querySelector('.spinning-bg')?.appendChild(renderer.domElement);
 
-		// Function to create a more subtle wireframe tesseract
-		function createSubtleWireframe(
-			scale: number,
-			color: number,
-			opacity: number
-		): THREE.LineSegments {
-			const geometry = new THREE.BoxGeometry(2, 2, 2);
-			const edges = new THREE.EdgesGeometry(geometry);
-			const material = new THREE.LineBasicMaterial({
-				color: color,
-				opacity: opacity,
-				transparent: true
-			});
-			const wireframe = new THREE.LineSegments(edges, material);
-			wireframe.scale.set(scale, scale, scale);
-			return wireframe;
+		// Define the vertices of a 4D hypercube (tesseract)
+		const hypercubeVertices: number[][] = [];
+		for (let i = 0; i < 16; i++) {
+			hypercubeVertices.push([
+				(i & 1 ? 1 : -1), // x
+				(i & 2 ? 1 : -1), // y
+				(i & 4 ? 1 : -1), // z
+				(i & 8 ? 1 : -1)  // w (4th dimension)
+			]);
 		}
 
-		// Create and layer a more subtle tesseract
-		tesseract = new THREE.Group();
-		tesseract.add(createSubtleWireframe(1.5, 0xff5577, 0.5)); // Outer glow with lower opacity
-		tesseract.add(createSubtleWireframe(1.0, 0xff7799, 0.4)); // Middle layer
-		tesseract.add(createSubtleWireframe(0.5, 0xff99bb, 0.3)); // Inner depth
-		scene.add(tesseract);
-		camera.position.z = 5;
+		// Function to project 4D points into 3D space
+		function project4Dto3D(v: number[]): THREE.Vector3 {
+			const scale = 3.5; // Scale it up to avoid small rendering
+			const w = 2 + v[3] * 0.5; // Perspective effect using W coordinate
+			return new THREE.Vector3(v[0] / w * scale, v[1] / w * scale, v[2] / w * scale);
+		}
 
-		// Slower and more subtle rotation animation
+		// Create edges for the tesseract (connecting its vertices)
+		const edges: number[][] = [];
+		for (let i = 0; i < 16; i++) {
+			for (let j = 0; j < 4; j++) {
+				const neighbor = i ^ (1 << j);
+				if (neighbor > i) edges.push([i, neighbor]);
+			}
+		}
+
+		// Function to create a wireframe for the tesseract
+		function createHyperCubeEdges(): THREE.LineSegments {
+			const geometry = new THREE.BufferGeometry();
+			const positions = new Float32Array(edges.length * 6); // Each edge has 2 points (x, y, z)
+			edges.forEach((edge, index) => {
+				const p1 = project4Dto3D(hypercubeVertices[edge[0]]);
+				const p2 = project4Dto3D(hypercubeVertices[edge[1]]);
+				positions.set([...p1.toArray(), ...p2.toArray()], index * 6);
+			});
+
+			geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+			const material = new THREE.LineBasicMaterial({ color: 0xff5577, transparent: true, opacity: 0.8 });
+			return new THREE.LineSegments(geometry, material);
+		}
+
+		// Create 4D projected tesseract
+		tesseract = new THREE.Group();
+		edgesMesh = createHyperCubeEdges();
+		tesseract.add(edgesMesh);
+		scene.add(tesseract);
+		camera.position.z = 8; // Adjusted camera to fit the larger projection
+
+		// Function to rotate the tesseract in 4D space
+		function rotate4D(theta: number, dimA: number, dimB: number) {
+			for (let i = 0; i < hypercubeVertices.length; i++) {
+				const a = hypercubeVertices[i][dimA];
+				const b = hypercubeVertices[i][dimB];
+				hypercubeVertices[i][dimA] = a * Math.cos(theta) - b * Math.sin(theta);
+				hypercubeVertices[i][dimB] = a * Math.sin(theta) + b * Math.cos(theta);
+			}
+		}
+
+		// Animation loop with proper updates
 		function animate() {
 			requestAnimationFrame(animate);
-			tesseract.rotation.x += 0.001;
-			tesseract.rotation.y += 0.002;
-			tesseract.rotation.z += 0.003;
+
+			// Rotate the hypercube in 4D space
+			rotate4D(0.001, 0, 3); // Rotate X-W
+			rotate4D(0.002, 1, 3); // Rotate Y-W
+			rotate4D(0.003, 2, 3); // Rotate Z-W
+
+			// Update the 3D projected positions
+			const positions = edgesMesh.geometry.attributes.position.array as Float32Array;
+			edges.forEach((edge, index) => {
+				const p1 = project4Dto3D(hypercubeVertices[edge[0]]);
+				const p2 = project4Dto3D(hypercubeVertices[edge[1]]);
+				positions.set([...p1.toArray(), ...p2.toArray()], index * 6);
+			});
+			edgesMesh.geometry.attributes.position.needsUpdate = true;
+
+			// Render scene
 			renderer.render(scene, camera);
 		}
+
 		animate();
 	});
 </script>
+
 
 <main>
 	<div class="spinning-bg"></div>
